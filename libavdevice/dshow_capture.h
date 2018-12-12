@@ -35,6 +35,63 @@
 
 #include "libavcodec/internal.h"
 
+#include <initguid.h>
+
+/* GUIDs and KS_H264VIDEOINFO structure required for H264 UVC capture
+   are not missing from MinGW headers. */
+#ifndef OUR_GUID_ENTRY
+#define OUR_GUID_ENTRY(name,l,w1,w2,b1,b2,b3,b4,b5,b6,b7,b8) DEFINE_GUID(name,l,w1,w2,b1,b2,b3,b4,b5,b6,b7,b8);
+#endif
+
+OUR_GUID_ENTRY(FORMAT_UVCH264Video,
+		0x2017be05,0x6629,0x4248,0xaa,0xed,0x7e,0x1a,0x47,0xbc,0x9b,0x9c)
+
+OUR_GUID_ENTRY(MEDIASUBTYPE_H264,
+		0x34363248,0x0000,0x0010,0x80,0x00,0x00,0xaa,0x00,0x38,0x9b,0x71)
+
+typedef struct tagKS_H264VIDEOINFO {
+  WORD wWidth;
+  WORD wHeight;
+  WORD wSARwidth;
+  WORD wSARheight;
+  WORD wProfile;
+  BYTE bLevelIDC;
+  WORD wConstrainedToolset;
+  DWORD bmSupportedUsages;
+  WORD bmCapabilities;
+  DWORD bmSVCCapabilities;
+  DWORD bmMVCCapabilities;
+  DWORD dwFrameInterval;
+  BYTE bMaxCodecConfigDelay;
+  BYTE bmSupportedSliceModes;
+  BYTE bmSupportedSyncFrameTypes;
+  BYTE bResolutionScaling;
+  BYTE bSimulcastSupport;
+  BYTE bmSupportedRateControlModes;
+  WORD wMaxMBperSecOneResolutionNoScalability;
+  WORD wMaxMBperSecTwoResolutionsNoScalability;
+  WORD wMaxMBperSecThreeResolutionsNoScalability;
+  WORD wMaxMBperSecFourResolutionsNoScalability;
+  WORD wMaxMBperSecOneResolutionTemporalScalability;
+  WORD wMaxMBperSecTwoResolutionsTemporalScalablility;
+  WORD wMaxMBperSecThreeResolutionsTemporalScalability;
+  WORD wMaxMBperSecFourResolutionsTemporalScalability;
+  WORD wMaxMBperSecOneResolutionTemporalQualityScalability;
+  WORD wMaxMBperSecTwoResolutionsTemporalQualityScalability;
+  WORD wMaxMBperSecThreeResolutionsTemporalQualityScalablity;
+  WORD wMaxMBperSecFourResolutionsTemporalQualityScalability;
+  WORD wMaxMBperSecOneResolutionTemporalSpatialScalability;
+  WORD wMaxMBperSecTwoResolutionsTemporalSpatialScalability;
+  WORD wMaxMBperSecThreeResolutionsTemporalSpatialScalablity;
+  WORD wMaxMBperSecFourResolutionsTemporalSpatialScalability;
+  WORD wMaxMBperSecOneResolutionFullScalability;
+  WORD wMaxMBperSecTwoResolutionsFullScalability;
+  WORD wMaxMBperSecThreeResolutionsFullScalability;
+  WORD wMaxMBperSecFourResolutionsFullScalability;
+} KS_H264VIDEOINFO,*PKS_H264VIDEOINFO;
+
+#undef OUR_GUID_ENTRY
+
 /* EC_DEVICE_LOST is not defined in MinGW dshow headers. */
 #ifndef EC_DEVICE_LOST
 #define EC_DEVICE_LOST 0x1f

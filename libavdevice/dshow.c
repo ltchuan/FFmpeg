@@ -349,7 +349,10 @@ dshow_cycle_formats(AVFormatContext *avctx, enum dshowDeviceType devtype,
             VIDEO_STREAM_CONFIG_CAPS *vcaps = caps;
             BITMAPINFOHEADER *bih;
             int64_t *fr;
+            int64_t fr_temp;
             const AVCodecTag *const tags[] = { avformat_get_riff_video_tags(), NULL };
+            int is_uvch264 = 0;
+            KS_H264VIDEOINFO *v_uvch264;
 #if DSHOWDEBUG
             ff_print_VIDEO_STREAM_CONFIG_CAPS(vcaps);
 #endif
@@ -361,53 +364,95 @@ dshow_cycle_formats(AVFormatContext *avctx, enum dshowDeviceType devtype,
                 VIDEOINFOHEADER2 *v = (void *) type->pbFormat;
                 fr = &v->AvgTimePerFrame;
                 bih = &v->bmiHeader;
+            } else if (IsEqualGUID(&type->formattype, &FORMAT_UVCH264Video)) {
+                av_log(avctx, AV_LOG_DEBUG, "FORMAT UVCH264Video found.\n");
+                is_uvch264 = 1;
+                v_uvch264 = (void *) type->pbFormat;
+                fr_temp = v_uvch264->dwFrameInterval;
+                fr = &fr_temp;
             } else {
                 goto next;
             }
             if (!pformat_set) {
-                enum AVPixelFormat pix_fmt = dshow_pixfmt(bih->biCompression, bih->biBitCount);
-                if (pix_fmt == AV_PIX_FMT_NONE) {
-                    enum AVCodecID codec_id = av_codec_get_id(tags, bih->biCompression);
-                    AVCodec *codec = avcodec_find_decoder(codec_id);
-                    if (codec_id == AV_CODEC_ID_NONE || !codec) {
-                        av_log(avctx, AV_LOG_INFO, "  unknown compression type 0x%X", (int) bih->biCompression);
+                if (!is_uvch264) { // Not UVC H264
+                    enum AVPixelFormat pix_fmt = dshow_pixfmt(bih->biCompression, bih->biBitCount);
+                    if (pix_fmt == AV_PIX_FMT_NONE) {
+                        enum AVCodecID codec_id = av_codec_get_id(tags, bih->biCompression);
+                        AVCodec *codec = avcodec_find_decoder(codec_id);
+                        if (codec_id == AV_CODEC_ID_NONE || !codec) {
+                            av_log(avctx, AV_LOG_INFO, "  unknown compression type 0x%X", (int) bih->biCompression);
+                        } else {
+                            av_log(avctx, AV_LOG_INFO, "  vcodec=%s", codec->name);
+                        }
                     } else {
-                        av_log(avctx, AV_LOG_INFO, "  vcodec=%s", codec->name);
+                        av_log(avctx, AV_LOG_INFO, "  pixel_format=%s", av_get_pix_fmt_name(pix_fmt));
                     }
-                } else {
-                    av_log(avctx, AV_LOG_INFO, "  pixel_format=%s", av_get_pix_fmt_name(pix_fmt));
+                } else { // UVC H264
+                    if (IsEqualGUID(&type->subtype, &MEDIASUBTYPE_H264)) {
+                        AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+                        av_log(avctx, AV_LOG_INFO, "  vcodec=%s", codec->name);
+                    } else {
+                        av_log(avctx, AV_LOG_INFO, "  incompatible H264 subtype");
+                    }
                 }
-                av_log(avctx, AV_LOG_INFO, "  min s=%ldx%ld fps=%g max s=%ldx%ld fps=%g\n",
-                       vcaps->MinOutputSize.cx, vcaps->MinOutputSize.cy,
-                       1e7 / vcaps->MaxFrameInterval,
-                       vcaps->MaxOutputSize.cx, vcaps->MaxOutputSize.cy,
-                       1e7 / vcaps->MinFrameInterval);
+                if (!IsEqualGUID(&vcaps->guid, &GUID_NULL)) {
+                    av_log(avctx, AV_LOG_INFO, "  min s=%ldx%ld fps=%g max s=%ldx%ld fps=%g\n",
+                           vcaps->MinOutputSize.cx, vcaps->MinOutputSize.cy,
+                           1e7 / vcaps->MaxFrameInterval,
+                           vcaps->MaxOutputSize.cx, vcaps->MaxOutputSize.cy,
+                           1e7 / vcaps->MinFrameInterval);
+                } else {
+                    av_log(avctx, AV_LOG_INFO, "  s=%dx%d fps=%g\n",
+                           v_uvch264->wWidth, v_uvch264->wHeight,
+                           1e7 / v_uvch264->dwFrameInterval);
+                }
                 continue;
             }
-            if (ctx->video_codec_id != AV_CODEC_ID_RAWVIDEO) {
-                if (ctx->video_codec_id != av_codec_get_id(tags, bih->biCompression))
+            if (!is_uvch264) { // Not UVC H264
+                if (ctx->video_codec_id != AV_CODEC_ID_RAWVIDEO) {
+                    if (ctx->video_codec_id != av_codec_get_id(tags, bih->biCompression))
+                        goto next;
+                }
+                if (ctx->pixel_format != AV_PIX_FMT_NONE &&
+                    ctx->pixel_format != dshow_pixfmt(bih->biCompression, bih->biBitCount)) {
                     goto next;
-            }
-            if (ctx->pixel_format != AV_PIX_FMT_NONE &&
-                ctx->pixel_format != dshow_pixfmt(bih->biCompression, bih->biBitCount)) {
-                goto next;
-            }
-            if (ctx->framerate) {
-                int64_t framerate = ((int64_t) ctx->requested_framerate.den*10000000)
-                                            /  ctx->requested_framerate.num;
-                if (framerate > vcaps->MaxFrameInterval ||
-                    framerate < vcaps->MinFrameInterval)
+                }
+                if (ctx->framerate) {
+                    int64_t framerate = ((int64_t) ctx->requested_framerate.den*10000000)
+                                                /  ctx->requested_framerate.num;
+                    if (framerate > vcaps->MaxFrameInterval ||
+                        framerate < vcaps->MinFrameInterval)
+                        goto next;
+                    *fr = framerate;
+                }
+                if (ctx->requested_width && ctx->requested_height) {
+                    if (ctx->requested_width  > vcaps->MaxOutputSize.cx ||
+                        ctx->requested_width  < vcaps->MinOutputSize.cx ||
+                        ctx->requested_height > vcaps->MaxOutputSize.cy ||
+                        ctx->requested_height < vcaps->MinOutputSize.cy)
+                        goto next;
+                    bih->biWidth  = ctx->requested_width;
+                    bih->biHeight = ctx->requested_height;
+                }
+            } else { // UVC H264
+                if (ctx->video_codec_id != AV_CODEC_ID_H264) {
                     goto next;
-                *fr = framerate;
-            }
-            if (ctx->requested_width && ctx->requested_height) {
-                if (ctx->requested_width  > vcaps->MaxOutputSize.cx ||
-                    ctx->requested_width  < vcaps->MinOutputSize.cx ||
-                    ctx->requested_height > vcaps->MaxOutputSize.cy ||
-                    ctx->requested_height < vcaps->MinOutputSize.cy)
+                }
+                if (!IsEqualGUID(&type->subtype, &MEDIASUBTYPE_H264)) {
                     goto next;
-                bih->biWidth  = ctx->requested_width;
-                bih->biHeight = ctx->requested_height;
+                }
+                if (ctx->framerate) {
+                    int64_t framerate = ((int64_t) ctx->requested_framerate.den*10000000)
+                                                /  ctx->requested_framerate.num;
+                    if (framerate > v_uvch264->dwFrameInterval)
+                        goto next;
+                    *fr = framerate;
+                }
+                if (ctx->requested_width && ctx->requested_height) {
+                    if (ctx->requested_width  != v_uvch264->wWidth ||
+                        ctx->requested_height != v_uvch264->wHeight)
+                        goto next;
+                }
             }
         } else {
             AUDIO_STREAM_CONFIG_CAPS *acaps = caps;
@@ -956,6 +1001,8 @@ dshow_add_device(AVFormatContext *avctx,
     if (devtype == VideoDevice) {
         BITMAPINFOHEADER *bih = NULL;
         AVRational time_base;
+        int is_uvch264 = 0;
+        KS_H264VIDEOINFO *v_uvch264;
 
         if (IsEqualGUID(&type.formattype, &FORMAT_VideoInfo)) {
             VIDEOINFOHEADER *v = (void *) type.pbFormat;
@@ -965,8 +1012,13 @@ dshow_add_device(AVFormatContext *avctx,
             VIDEOINFOHEADER2 *v = (void *) type.pbFormat;
             time_base = (AVRational) { v->AvgTimePerFrame, 10000000 };
             bih = &v->bmiHeader;
+        } else if (IsEqualGUID(&type.formattype, &FORMAT_UVCH264Video)) {
+            av_log(avctx, AV_LOG_DEBUG, "FORMAT UVCH264Video found.\n");
+            is_uvch264 = 1;
+            v_uvch264 = (void *) type.pbFormat;
+            time_base = (AVRational) { v_uvch264->dwFrameInterval, 10000000 };
         }
-        if (!bih) {
+        if ((!bih) && (!is_uvch264)) {
             av_log(avctx, AV_LOG_ERROR, "Could not get media type.\n");
             goto error;
         }
@@ -975,37 +1027,43 @@ dshow_add_device(AVFormatContext *avctx,
         st->r_frame_rate = av_inv_q(time_base);
 
         par->codec_type = AVMEDIA_TYPE_VIDEO;
-        par->width      = bih->biWidth;
-        par->height     = bih->biHeight;
-        par->codec_tag  = bih->biCompression;
-        par->format     = dshow_pixfmt(bih->biCompression, bih->biBitCount);
-        if (bih->biCompression == MKTAG('H', 'D', 'Y', 'C')) {
-            av_log(avctx, AV_LOG_DEBUG, "attempt to use full range for HDYC...\n");
-            par->color_range = AVCOL_RANGE_MPEG; // just in case it needs this...
-        }
-        if (par->format == AV_PIX_FMT_NONE) {
-            const AVCodecTag *const tags[] = { avformat_get_riff_video_tags(), NULL };
-            par->codec_id = av_codec_get_id(tags, bih->biCompression);
-            if (par->codec_id == AV_CODEC_ID_NONE) {
-                av_log(avctx, AV_LOG_ERROR, "Unknown compression type. "
-                                 "Please report type 0x%X.\n", (int) bih->biCompression);
-                return AVERROR_PATCHWELCOME;
+        if (!is_uvch264) { // Not UVC H264
+            par->width      = bih->biWidth;
+            par->height     = bih->biHeight;
+            par->codec_tag  = bih->biCompression;
+            par->format     = dshow_pixfmt(bih->biCompression, bih->biBitCount);
+            if (bih->biCompression == MKTAG('H', 'D', 'Y', 'C')) {
+                av_log(avctx, AV_LOG_DEBUG, "attempt to use full range for HDYC...\n");
+                par->color_range = AVCOL_RANGE_MPEG; // just in case it needs this...
             }
-            par->bits_per_coded_sample = bih->biBitCount;
-        } else {
-            par->codec_id = AV_CODEC_ID_RAWVIDEO;
-            if (bih->biCompression == BI_RGB || bih->biCompression == BI_BITFIELDS) {
+            if (par->format == AV_PIX_FMT_NONE) {
+                const AVCodecTag *const tags[] = { avformat_get_riff_video_tags(), NULL };
+                par->codec_id = av_codec_get_id(tags, bih->biCompression);
+                if (par->codec_id == AV_CODEC_ID_NONE) {
+                    av_log(avctx, AV_LOG_ERROR, "Unknown compression type. "
+                                     "Please report type 0x%X.\n", (int) bih->biCompression);
+                    return AVERROR_PATCHWELCOME;
+                }
                 par->bits_per_coded_sample = bih->biBitCount;
-                if (par->height < 0) {
-                    par->height *= -1;
-                } else {
-                    par->extradata = av_malloc(9 + AV_INPUT_BUFFER_PADDING_SIZE);
-                    if (par->extradata) {
-                        par->extradata_size = 9;
-                        memcpy(par->extradata, "BottomUp", 9);
+            } else {
+                par->codec_id = AV_CODEC_ID_RAWVIDEO;
+                if (bih->biCompression == BI_RGB || bih->biCompression == BI_BITFIELDS) {
+                    par->bits_per_coded_sample = bih->biBitCount;
+                    if (par->height < 0) {
+                        par->height *= -1;
+                    } else {
+                        par->extradata = av_malloc(9 + AV_INPUT_BUFFER_PADDING_SIZE);
+                        if (par->extradata) {
+                            par->extradata_size = 9;
+                            memcpy(par->extradata, "BottomUp", 9);
+                        }
                     }
                 }
             }
+        } else { // UVC H264
+            par->width      = v_uvch264->wWidth;
+            par->height     = v_uvch264->wHeight;
+            par->codec_id   = AV_CODEC_ID_H264;
         }
     } else {
         WAVEFORMATEX *fx = NULL;
