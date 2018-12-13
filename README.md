@@ -1,3 +1,5 @@
+See https://ffmpeg.zeranoe.com/forum/viewtopic.php?f=3&t=2529&start=10#p14470 for more details.
+
 FFmpeg README
 =============
 
