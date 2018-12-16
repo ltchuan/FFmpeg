@@ -390,7 +390,7 @@ dshow_cycle_formats(AVFormatContext *avctx, enum dshowDeviceType devtype,
                 } else { // UVC H264
                     if (IsEqualGUID(&type->subtype, &MEDIASUBTYPE_H264)) {
                         AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-                        av_log(avctx, AV_LOG_INFO, "  vcodec=%s", codec->name);
+                        av_log(avctx, AV_LOG_INFO, "  vcodec=%s, wprofile=0x%x", codec->name, v_uvch264->wProfile);
                     } else {
                         av_log(avctx, AV_LOG_INFO, "  incompatible H264 subtype");
                     }
@@ -440,6 +440,11 @@ dshow_cycle_formats(AVFormatContext *avctx, enum dshowDeviceType devtype,
                 }
                 if (!IsEqualGUID(&type->subtype, &MEDIASUBTYPE_H264)) {
                     goto next;
+                }
+                if (ctx->h264_profile != FF_PROFILE_UNKNOWN) {
+                    if (ctx->h264_profile != (v_uvch264->wProfile >> (8)) & 0xFF) { // The left byte of wProfile is the profile_idc
+                        goto next;
+                    }
                 }
                 if (ctx->framerate) {
                     int64_t framerate = ((int64_t) ctx->requested_framerate.den*10000000)
@@ -1369,6 +1374,10 @@ static const AVOption options[] = {
     { "audio_device_save", "save audio capture filter device (and properties) to file", OFFSET(audio_filter_save_file), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, DEC },
     { "video_device_load", "load video capture filter device (and properties) from file", OFFSET(video_filter_load_file), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, DEC },
     { "video_device_save", "save video capture filter device (and properties) to file", OFFSET(video_filter_save_file), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, DEC },
+    { "h264_profile", "set h264 profile to use (ignored unless video codec set to h264)", OFFSET(h264_profile), AV_OPT_TYPE_INT, {.i64 = FF_PROFILE_UNKNOWN}, INT_MIN, INT_MAX, DEC, "h264_profile"},
+    { "baseline", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = FF_PROFILE_H264_BASELINE}, INT_MIN, INT_MAX, DEC, "h264_profile"},
+    { "main", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = FF_PROFILE_H264_MAIN}, INT_MIN, INT_MAX, DEC, "h264_profile"},
+    { "high", NULL, 0, AV_OPT_TYPE_CONST, {.i64 = FF_PROFILE_H264_HIGH}, INT_MIN, INT_MAX, DEC, "h264_profile"},
     { NULL },
 };
 

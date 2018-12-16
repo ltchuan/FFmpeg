@@ -390,6 +390,7 @@ struct dshow_ctx {
     enum AVPixelFormat pixel_format;
     enum AVCodecID video_codec_id;
     char *framerate;
+    int h264_profile;
 
     int requested_width;
     int requested_height;
